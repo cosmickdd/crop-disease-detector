@@ -14,9 +14,9 @@ from __future__ import annotations
 import logging
 import time
 from pathlib import Path
-from typing import List
+from typing import List, Optional
 
-from fastapi import APIRouter, File, HTTPException, UploadFile, status
+from fastapi import APIRouter, File, HTTPException, Query, UploadFile, status
 
 import sys
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -30,7 +30,7 @@ from api.schemas import (
     Top3Prediction,
 )
 from src.disease_db import get_disease_info, list_all_diseases
-from src.inference import get_engine
+from src.inference import get_engine, CROP_KEYS
 
 logger = logging.getLogger(__name__)
 
@@ -82,6 +82,7 @@ def _build_response(prediction) -> DiseaseDetectionResponse:
         backend=prediction.backend,
         below_threshold=prediction.below_threshold,
         warning=prediction.warning,
+        crop_hint_applied=prediction.crop_hint_applied,
     )
 
 
@@ -105,6 +106,15 @@ async def detect_disease(
         ...,
         description="Crop leaf / plant image (JPG, PNG, WEBP — max 10 MB)",
     ),
+    crop_hint: Optional[str] = Query(
+        None,
+        description=(
+            "Optional crop type to constrain prediction. "
+            "Accepted values: apple, corn, pepper, potato, tomato. "
+            "When provided the model only chooses among that crop's disease classes, "
+            "eliminating cross-crop confusion."
+        ),
+    ),
 ) -> DiseaseDetectionResponse:
     _validate_image_upload(image)
 
@@ -121,7 +131,7 @@ async def detect_disease(
 
     try:
         engine     = get_engine()
-        prediction = engine.predict_from_bytes(image_bytes)
+        prediction = engine.predict_from_bytes(image_bytes, crop_hint=crop_hint)
     except FileNotFoundError as exc:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -215,6 +225,16 @@ async def health_check() -> HealthResponse:
         num_classes=config.NUM_CLASSES,
         version="1.0.0",
     )
+
+
+@router.get(
+    "/crops",
+    summary="List supported crop types for crop_hint",
+    tags=["System"],
+)
+async def list_crops():
+    """Returns the crop keys accepted by the crop_hint query parameter."""
+    return {"crops": CROP_KEYS}
 
 
 @router.get(

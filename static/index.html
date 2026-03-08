@@ -11,6 +11,7 @@
     .conf-bar { transition: width 0.8s cubic-bezier(.4,0,.2,1); }
     .tab-btn { border-bottom: 2px solid transparent; transition: all .15s; }
     .tab-btn.active { border-bottom-color: #16a34a; color: #15803d; font-weight: 600; }
+    .crop-btn.active { border-color: #16a34a; background: #f0fdf4; color: #15803d; font-weight: 600; }
     .tab-pane { display: none; }
     .tab-pane.active { display: block; }
     .spinner {
@@ -57,7 +58,38 @@
       <input id="file-input" type="file" class="hidden" accept=".jpg,.jpeg,.png,.webp" />
     </label>
 
-    <!-- Preview row -->
+    <!-- Crop selector -->
+    <div class="mt-4">
+      <label class="block text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1.5">
+        Crop type <span class="font-normal text-gray-400">(optional — improves accuracy)</span>
+      </label>
+      <div class="flex flex-wrap gap-2" id="crop-btns">
+        <button data-crop="" class="crop-btn active px-3 py-1.5 rounded-full border text-sm font-medium
+               border-green-500 bg-green-50 text-green-700">
+          🌱 Auto-detect
+        </button>
+        <button data-crop="apple" class="crop-btn px-3 py-1.5 rounded-full border text-sm font-medium
+               border-gray-200 bg-white text-gray-600 hover:border-green-400 hover:text-green-700">
+          🍎 Apple
+        </button>
+        <button data-crop="corn" class="crop-btn px-3 py-1.5 rounded-full border text-sm font-medium
+               border-gray-200 bg-white text-gray-600 hover:border-green-400 hover:text-green-700">
+          🌽 Corn
+        </button>
+        <button data-crop="pepper" class="crop-btn px-3 py-1.5 rounded-full border text-sm font-medium
+               border-gray-200 bg-white text-gray-600 hover:border-green-400 hover:text-green-700">
+          🌶️ Pepper
+        </button>
+        <button data-crop="potato" class="crop-btn px-3 py-1.5 rounded-full border text-sm font-medium
+               border-gray-200 bg-white text-gray-600 hover:border-green-400 hover:text-green-700">
+          🥔 Potato
+        </button>
+        <button data-crop="tomato" class="crop-btn px-3 py-1.5 rounded-full border text-sm font-medium
+               border-gray-200 bg-white text-gray-600 hover:border-green-400 hover:text-green-700">
+          🍅 Tomato
+        </button>
+      </div>
+    </div>
     <div id="preview-row" class="hidden mt-5 flex items-center gap-4">
       <img id="preview-img"
         class="h-28 w-28 rounded-xl object-cover border border-gray-200 shadow-sm flex-shrink-0"
@@ -110,8 +142,7 @@
       <!-- Healthy badge -->
       <span id="healthy-badge"
         class="flex-shrink-0 px-3 py-1 rounded-full text-sm font-semibold bg-white/20 text-white mt-1 border border-white/30">
-      </span>
-    </div>
+      </span>      <span id="crop-hint-badge" class="hidden flex-shrink-0 px-2 py-1 rounded-full text-xs font-semibold bg-white/10 text-white/80 mt-1 border border-white/20"></span>    </div>
 
     <div class="px-6 py-5 space-y-5">
 
@@ -173,6 +204,16 @@
   const errorBox   = document.getElementById('error-box');
 
   let selectedFile = null;
+  let selectedCrop = '';   // empty string = auto-detect
+
+  /* ── Crop selector ──────────────────────────────────────── */
+  document.querySelectorAll('.crop-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.crop-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      selectedCrop = btn.dataset.crop;
+    });
+  });
 
   /* ── Drag & drop ─────────────────────────────────────────────────────── */
   dropZone.addEventListener('dragover',  e => { e.preventDefault(); dropZone.classList.add('drag-over'); });
@@ -209,8 +250,12 @@
     const form = new FormData();
     form.append('image', selectedFile, selectedFile.name);
 
+    const url = selectedCrop
+      ? `/api/v1/detect-disease?crop_hint=${encodeURIComponent(selectedCrop)}`
+      : '/api/v1/detect-disease';
+
     try {
-      const resp = await fetch('/api/v1/detect-disease', { method: 'POST', body: form });
+      const resp = await fetch(url, { method: 'POST', body: form });
       const data = await resp.json();
       if (!resp.ok) throw new Error(data.detail || `HTTP ${resp.status}`);
       showResult(data);
@@ -255,6 +300,15 @@
 
     const badge = document.getElementById('healthy-badge');
     badge.textContent = healthy ? '✓ Healthy' : '✗ Diseased';
+
+    /* Crop hint badge */
+    const chBadge = document.getElementById('crop-hint-badge');
+    if (d.crop_hint_applied) {
+      chBadge.textContent = '🌱 Filtered: ' + d.crop_hint_applied.charAt(0).toUpperCase() + d.crop_hint_applied.slice(1);
+      chBadge.classList.remove('hidden');
+    } else {
+      chBadge.classList.add('hidden');
+    }
 
     /* Confidence bar */
     const pct = Math.round(d.confidence * 100);

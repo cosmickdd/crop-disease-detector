@@ -39,6 +39,7 @@ class DiseaseDetectionResponse(BaseModel):
     backend:           str           = Field("pytorch", description="Inference backend used: pytorch | onnx")
     below_threshold:   bool          = Field(False, description="True if confidence is below warning threshold or prediction is ambiguous")
     warning:           Optional[str] = Field(None, description="Warning message if prediction confidence is low or ambiguous")
+    crop_hint_applied: Optional[str] = Field(None, description="Crop hint used to constrain prediction (e.g. 'tomato'), or null for auto-detect")
 
     model_config = {
         "json_schema_extra": {

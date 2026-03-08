@@ -70,6 +70,21 @@ def _softmax_np(x: np.ndarray) -> np.ndarray:
     return (e / e.sum()).astype(np.float32)
 
 
+# Maps user-friendly crop names (lowercase) → the class-name prefix used in
+# PlantVillage-style class labels.  Used by the crop_hint masking logic.
+_CROP_PREFIXES: Dict[str, str] = {
+    "apple":   "Apple",
+    "corn":    "Corn",
+    "maize":   "Corn",
+    "pepper":  "Pepper",
+    "potato":  "Potato",
+    "tomato":  "Tomato",
+}
+
+# Canonical display names used in the /crops endpoint.
+CROP_KEYS: List[str] = ["apple", "corn", "pepper", "potato", "tomato"]
+
+
 # ---------------------------------------------------------------------------
 # Prediction Result dataclass
 # ---------------------------------------------------------------------------
@@ -92,6 +107,7 @@ class DiseasePrediction:
     backend:           str   = "pytorch"
     below_threshold:   bool  = False
     warning:           Optional[str] = None
+    crop_hint_applied: Optional[str] = None
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -110,6 +126,7 @@ class DiseasePrediction:
             "backend":           self.backend,
             "below_threshold":   self.below_threshold,
             "warning":           self.warning,
+            "crop_hint_applied": self.crop_hint_applied,
         }
 
 
@@ -183,6 +200,9 @@ class InferenceEngine:
             self.model = self._load_model()
             self._ort_session = None
 
+        # Build crop → class-index mapping from the loaded class names.
+        self._crop_index_map: Dict[str, List[int]] = self._build_crop_index_map()
+
         logger.info(
             f"InferenceEngine ready — arch={arch}, device={self._device_str}, "
             f"classes={len(self.class_names)}, backend={self._backend}, "
@@ -192,6 +212,19 @@ class InferenceEngine:
     # ------------------------------------------------------------------
     # Private helpers
     # ------------------------------------------------------------------
+
+    def _build_crop_index_map(self) -> Dict[str, List[int]]:
+        """Pre-compute crop → class-index lists from the loaded class names."""
+        result: Dict[str, List[int]] = {}
+        for crop_key, prefix in _CROP_PREFIXES.items():
+            indices = [i for i, c in enumerate(self.class_names) if c.startswith(prefix)]
+            if indices:
+                result[crop_key] = indices
+        return result
+
+    def _crop_class_indices(self, crop_hint: str) -> List[int]:
+        """Return class indices for crop_hint, or [] if unknown (no masking)."""
+        return self._crop_index_map.get(crop_hint.lower().strip(), [])
 
     @staticmethod
     def _resolve_device_str(device_str: str) -> str:
@@ -328,12 +361,24 @@ class InferenceEngine:
         logits_np: np.ndarray,   # shape (num_classes,) float32
         inference_ms: float,
         backend: str,
+        crop_hint: Optional[str] = None,
     ) -> DiseasePrediction:
         """Temperature scaling + softmax + top-k using pure numpy.
 
         This is the primary prediction builder on CPU deployments — it has
         zero dependency on torch or torchvision.
         """
+        # Crop masking: zero-out all logits outside the requested crop before
+        # softmax so the model only chooses among that crop's disease classes.
+        crop_hint_applied: Optional[str] = None
+        if crop_hint:
+            valid = self._crop_class_indices(crop_hint)
+            if valid:
+                crop_hint_applied = crop_hint.lower().strip()
+                masked = np.full(len(logits_np), -1e9, dtype=np.float32)
+                masked[valid] = logits_np[valid]
+                logits_np = masked
+
         probs = _softmax_np(logits_np / self.temperature)
 
         top_idx    = int(np.argmax(probs))
@@ -395,6 +440,7 @@ class InferenceEngine:
             backend=backend,
             below_threshold=uncertain,
             warning=warning,
+            crop_hint_applied=crop_hint_applied,
         )
 
     def _build_prediction(
@@ -402,8 +448,19 @@ class InferenceEngine:
         logits,          # torch.Tensor, shape (num_classes,) on CPU
         inference_ms: float,
         backend: str,
+        crop_hint: Optional[str] = None,
     ) -> DiseasePrediction:
         """PyTorch-backed prediction builder (CUDA / local use only)."""
+        # Crop masking — same logic as the numpy path.
+        crop_hint_applied: Optional[str] = None
+        if crop_hint:
+            valid = self._crop_class_indices(crop_hint)
+            if valid:
+                crop_hint_applied = crop_hint.lower().strip()
+                mask = torch.full(logits.shape, -1e9, dtype=logits.dtype, device=logits.device)
+                mask[valid] = logits[valid]
+                logits = mask
+
         probs = F.softmax(logits / self.temperature, dim=0)
 
         # Top-1
@@ -461,9 +518,10 @@ class InferenceEngine:
             backend=backend,
             below_threshold=uncertain,
             warning=warning,
+            crop_hint_applied=crop_hint_applied,
         )
 
-    def _predict_pytorch(self, img: Image.Image) -> DiseasePrediction:
+    def _predict_pytorch(self, img: Image.Image, crop_hint: Optional[str] = None) -> DiseasePrediction:
         if not _TORCH_AVAILABLE:
             raise RuntimeError(
                 "PyTorch is not installed. "
@@ -474,9 +532,9 @@ class InferenceEngine:
             t_start = time.perf_counter()
             tensor  = self._pil_to_tensor(img)
             logits  = self.model(tensor).squeeze(0).cpu()   # (num_classes,)
-        return self._build_prediction(logits, (time.perf_counter() - t_start) * 1000, "pytorch")
+        return self._build_prediction(logits, (time.perf_counter() - t_start) * 1000, "pytorch", crop_hint)
 
-    def _predict_onnx(self, img: Image.Image) -> DiseasePrediction:
+    def _predict_onnx(self, img: Image.Image, crop_hint: Optional[str] = None) -> DiseasePrediction:
         # Pure numpy — no torch involved at all.
         t_start   = time.perf_counter()
         np_input  = self._pil_to_numpy(img)
@@ -485,34 +543,35 @@ class InferenceEngine:
             logits_np.squeeze(0),                           # (num_classes,)
             (time.perf_counter() - t_start) * 1000,
             "onnx",
+            crop_hint,
         )
 
-    def _predict_pil(self, img: Image.Image) -> DiseasePrediction:
+    def _predict_pil(self, img: Image.Image, crop_hint: Optional[str] = None) -> DiseasePrediction:
         img = img.convert("RGB")
-        return self._predict_onnx(img) if self._backend == "onnx" else self._predict_pytorch(img)
+        return self._predict_onnx(img, crop_hint) if self._backend == "onnx" else self._predict_pytorch(img, crop_hint)
 
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
 
-    def predict_from_bytes(self, image_bytes: bytes) -> DiseasePrediction:
+    def predict_from_bytes(self, image_bytes: bytes, crop_hint: Optional[str] = None) -> DiseasePrediction:
         """Run inference on raw image bytes (JPG / PNG / WEBP)."""
-        return self._predict_pil(self._bytes_to_pil(image_bytes))
+        return self._predict_pil(self._bytes_to_pil(image_bytes), crop_hint)
 
-    def predict_from_pil(self, img: Image.Image) -> DiseasePrediction:
+    def predict_from_pil(self, img: Image.Image, crop_hint: Optional[str] = None) -> DiseasePrediction:
         """Run inference on a PIL Image object."""
-        return self._predict_pil(img)
+        return self._predict_pil(img, crop_hint)
 
-    def predict_from_path(self, image_path: str | Path) -> DiseasePrediction:
+    def predict_from_path(self, image_path: str | Path, crop_hint: Optional[str] = None) -> DiseasePrediction:
         """Run inference from a file path."""
         path = Path(image_path)
         if not path.exists():
             raise FileNotFoundError(f"Image not found: {path}")
-        return self._predict_pil(Image.open(path))
+        return self._predict_pil(Image.open(path), crop_hint)
 
-    def predict_batch(self, image_bytes_list: List[bytes]) -> List[DiseasePrediction]:
+    def predict_batch(self, image_bytes_list: List[bytes], crop_hint: Optional[str] = None) -> List[DiseasePrediction]:
         """Run inference on a list of raw image bytes (sequential)."""
-        return [self.predict_from_bytes(b) for b in image_bytes_list]
+        return [self.predict_from_bytes(b, crop_hint) for b in image_bytes_list]
 
 
 # ---------------------------------------------------------------------------
