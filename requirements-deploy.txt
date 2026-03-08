@@ -17,7 +17,8 @@ python-multipart>=0.0.9
 
 # Image processing
 Pillow>=10.3.0
-numpy>=1.26.0
+# numpy 2.0 broke the torch.from_numpy bridge in torch 2.2.x; pin to 1.x.
+numpy>=1.26.0,<2.0
 
 # Configuration & serialisation
 pydantic>=2.7.0

@@ -257,9 +257,23 @@ class InferenceEngine:
         return self.transform(img).unsqueeze(0).to(self.device)
 
     def _pil_to_numpy(self, img: Image.Image) -> np.ndarray:
-        """Apply inference transforms and return float32 numpy array (1, C, H, W)."""
-        tensor = self.transform(img).unsqueeze(0)   # keep on CPU for ONNX
-        return tensor.numpy().astype(np.float32)
+        """Preprocess PIL image to float32 (1, C, H, W) for ONNX Runtime.
+
+        Bypasses torchvision.transforms.ToTensor — which calls torch.from_numpy
+        internally — so the ONNX path has zero dependency on PyTorch's numpy
+        bridge.  Replicates get_val_transforms: Resize → /255 → Normalize.
+        """
+        # Resize (matches get_val_transforms Resize((image_size, image_size)))
+        img = img.resize((self.image_size, self.image_size), Image.BILINEAR)
+        # PIL RGB uint8 → float32 [0, 1] in HWC layout
+        arr = np.array(img, dtype=np.float32) / 255.0        # (H, W, 3)
+        # HWC → CHW
+        arr = arr.transpose(2, 0, 1)                         # (3, H, W)
+        # ImageNet normalisation
+        mean = np.array(config.MEAN, dtype=np.float32).reshape(3, 1, 1)
+        std  = np.array(config.STD,  dtype=np.float32).reshape(3, 1, 1)
+        arr  = (arr - mean) / std
+        return arr[np.newaxis].astype(np.float32)            # (1, 3, H, W)
 
     # ------------------------------------------------------------------
     # Core prediction logic
