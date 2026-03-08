@@ -1,13 +1,13 @@
 # ============================================================
 # Krishi AI — Deployment requirements (CPU / cloud platforms)
 # ============================================================
-# PyTorch CPU wheels are installed SEPARATELY in the Dockerfile:
-#   pip install torch==2.2.2+cpu torchvision==0.17.2+cpu \
-#       --index-url https://download.pytorch.org/whl/cpu
-#
-# This file contains every other runtime dependency.
-# Training, visualisation, and dataset-download packages are
-# intentionally excluded to keep the image small.
+# torch and torchvision are NOT installed on deployment.
+# All inference is handled by ONNX Runtime — the inference engine
+# auto-detects torch absence and runs the pure-numpy ONNX path.
+# Benefits:
+#   - Image size ~200 MB instead of 1 GB+
+#   - No torch/numpy ABI conflicts (RecursionError in _dtype.py)
+#   - Faster cold starts on Render / Railway free tier
 # ============================================================
 
 # API server
@@ -17,17 +17,20 @@ python-multipart>=0.0.9
 
 # Image processing
 Pillow>=10.3.0
-# numpy 2.0 broke the torch.from_numpy bridge in torch 2.2.x; pin to 1.x.
-numpy>=1.26.0,<2.0
+# Exact pin: 1.26.4 is the last stable numpy 1.x release.
+# onnxruntime 1.20+ can pull numpy 2.x which triggers a dtype
+# recursion crash (RecursionError in _dtype._scalar_str) on Python 3.12.
+numpy==1.26.4
 
 # Configuration & serialisation
 pydantic>=2.7.0
 pydantic-settings>=2.3.0
 python-dotenv>=1.0.1
 
-# ONNX inference (primary backend on CPU deployments — 2-3× faster than PyTorch)
+# ONNX inference — sole inference backend on CPU deployments
 onnx>=1.16.0
-onnxruntime>=1.18.0
+# Pin to <1.21.0: versions 1.21+ require numpy 2.x and conflict with pin above.
+onnxruntime>=1.18.0,<1.21.0
 
 # Async file responses
 aiofiles>=23.2.0

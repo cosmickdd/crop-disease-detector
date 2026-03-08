@@ -22,14 +22,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 RUN pip install --upgrade pip
 
-# Install CPU-only PyTorch first (avoids pulling 4 GB CUDA wheels).
-# torch 2.2.x is the last stable release with +cpu wheels on PyPI.
-RUN pip install --prefix=/install --no-cache-dir \
-        torch==2.2.2+cpu \
-        torchvision==0.17.2+cpu \
-        --index-url https://download.pytorch.org/whl/cpu
-
-# Install remaining runtime deps (no training / visualisation packages)
+# ONNX Runtime handles all inference — torch and torchvision are NOT installed.
+# This keeps the image under ~200 MB (vs 1 GB+ with CPU torch) and eliminates
+# all torch/numpy ABI conflicts that crash Python 3.12 on cloud platforms.
 COPY requirements-deploy.txt .
 RUN pip install --prefix=/install --no-cache-dir -r requirements-deploy.txt
 

@@ -29,18 +29,45 @@ from pathlib import Path
 from typing import Dict, List, Optional, Any
 
 import numpy as np
-import torch
-import torch.nn.functional as F
 from PIL import Image
+from types import SimpleNamespace
 
 import sys
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import config
-from src.dataset import get_inference_transform
 from src.disease_db import get_disease_info
 
+# ---------------------------------------------------------------------------
+# Optional torch / torchvision — only needed for the PyTorch/CUDA backend.
+# CPU cloud deployments (Render / Railway) run ONNX Runtime exclusively;
+# neither torch nor torchvision needs to be installed in that environment.
+# ---------------------------------------------------------------------------
+try:
+    import torch
+    import torch.nn.functional as F
+    _TORCH_AVAILABLE: bool = True
+except ImportError:
+    _TORCH_AVAILABLE = False
+
+try:
+    from src.dataset import get_inference_transform as _get_inference_transform
+    _TV_AVAILABLE: bool = True
+except ImportError:                     # torchvision not installed
+    _TV_AVAILABLE = False
+    _get_inference_transform = None     # type: ignore[assignment]
+
 logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Pure-numpy helpers — used by the ONNX path (zero torch dependency)
+# ---------------------------------------------------------------------------
+
+def _softmax_np(x: np.ndarray) -> np.ndarray:
+    """Numerically stable softmax over a 1-D float32 array."""
+    e = np.exp(x - x.max())
+    return (e / e.sum()).astype(np.float32)
 
 
 # ---------------------------------------------------------------------------
@@ -122,8 +149,20 @@ class InferenceEngine:
         self.arch           = arch
         self.image_size     = image_size
         self.conf_threshold = conf_threshold
-        self.device         = self._resolve_device(device_str)
-        self.transform      = get_inference_transform(image_size)
+        # Plain string device type ("cpu" / "cuda"); torch.device set only if
+        # torch is installed so startup never crashes on CPU-only images.
+        self._device_str = self._resolve_device_str(device_str)
+        self.device = (
+            torch.device(self._device_str)
+            if _TORCH_AVAILABLE
+            else SimpleNamespace(type=self._device_str)
+        )
+        # torchvision transform — only needed for the PyTorch/CUDA backend.
+        self.transform = (
+            _get_inference_transform(image_size)
+            if _TV_AVAILABLE and _get_inference_transform is not None
+            else None
+        )
 
         # Resolve class names
         self.class_names = class_names or self._load_class_names()
@@ -141,7 +180,7 @@ class InferenceEngine:
             self._ort_session = None
 
         logger.info(
-            f"InferenceEngine ready — arch={arch}, device={self.device}, "
+            f"InferenceEngine ready — arch={arch}, device={self._device_str}, "
             f"classes={len(self.class_names)}, backend={self._backend}, "
             f"temperature={self.temperature:.4f}"
         )
@@ -151,10 +190,11 @@ class InferenceEngine:
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _resolve_device(device_str: str) -> torch.device:
+    def _resolve_device_str(device_str: str) -> str:
+        """Return 'cuda' or 'cpu' as a plain string (no torch required)."""
         if device_str == "auto":
-            return torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        return torch.device(device_str)
+            return "cuda" if (_TORCH_AVAILABLE and torch.cuda.is_available()) else "cpu"
+        return device_str
 
     def _load_class_names(self) -> List[str]:
         """Try to load class names persisted by the Trainer, else fall back to config."""
@@ -279,13 +319,63 @@ class InferenceEngine:
     # Core prediction logic
     # ------------------------------------------------------------------
 
-    def _build_prediction(
+    def _build_prediction_np(
         self,
-        logits: torch.Tensor,   # shape (num_classes,) — on CPU
+        logits_np: np.ndarray,   # shape (num_classes,) float32
         inference_ms: float,
         backend: str,
     ) -> DiseasePrediction:
-        """Apply temperature scaling + softmax and build a DiseasePrediction."""
+        """Temperature scaling + softmax + top-k using pure numpy.
+
+        This is the primary prediction builder on CPU deployments — it has
+        zero dependency on torch or torchvision.
+        """
+        probs = _softmax_np(logits_np / self.temperature)
+
+        top_idx    = int(np.argmax(probs))
+        confidence = float(probs[top_idx])
+        class_name = self.class_names[top_idx]
+
+        k         = min(3, len(self.class_names))
+        top3_idxs = np.argsort(probs)[::-1][:k]
+        top3 = [
+            {
+                "class_name": self.class_names[int(i)],
+                "confidence": round(float(probs[i]), 4),
+            }
+            for i in top3_idxs
+        ]
+
+        if confidence < self.conf_threshold:
+            logger.warning(
+                f"Low confidence prediction: {class_name} ({confidence:.2%}). "
+                "Image may not be a crop leaf or outside the training distribution."
+            )
+
+        info = get_disease_info(class_name)
+        return DiseasePrediction(
+            crop=info["crop"],
+            disease=info["disease"],
+            is_healthy=info["is_healthy"],
+            confidence=confidence,
+            class_name=class_name,
+            pathogen=info.get("pathogen"),
+            symptoms=info.get("symptoms", []),
+            treatment=info.get("treatment", []),
+            prevention=info.get("prevention", []),
+            severity=info.get("severity", "Unknown"),
+            top3=top3,
+            inference_time_ms=inference_ms,
+            backend=backend,
+        )
+
+    def _build_prediction(
+        self,
+        logits,          # torch.Tensor, shape (num_classes,) on CPU
+        inference_ms: float,
+        backend: str,
+    ) -> DiseasePrediction:
+        """PyTorch-backed prediction builder (CUDA / local use only)."""
         probs = F.softmax(logits / self.temperature, dim=0)
 
         # Top-1
@@ -326,19 +416,29 @@ class InferenceEngine:
             backend=backend,
         )
 
-    @torch.no_grad()
     def _predict_pytorch(self, img: Image.Image) -> DiseasePrediction:
-        t_start = time.perf_counter()
-        tensor  = self._pil_to_tensor(img)
-        logits  = self.model(tensor).squeeze(0).cpu()     # (num_classes,)
+        if not _TORCH_AVAILABLE:
+            raise RuntimeError(
+                "PyTorch is not installed. "
+                "Cannot use the 'pytorch' backend on this machine. "
+                "Install torch, or let the engine auto-select the ONNX backend."
+            )
+        with torch.no_grad():
+            t_start = time.perf_counter()
+            tensor  = self._pil_to_tensor(img)
+            logits  = self.model(tensor).squeeze(0).cpu()   # (num_classes,)
         return self._build_prediction(logits, (time.perf_counter() - t_start) * 1000, "pytorch")
 
     def _predict_onnx(self, img: Image.Image) -> DiseasePrediction:
+        # Pure numpy — no torch involved at all.
         t_start   = time.perf_counter()
         np_input  = self._pil_to_numpy(img)
         logits_np = self._ort_session.run(["logits"], {"input": np_input})[0]  # (1, C)
-        logits    = torch.from_numpy(logits_np).squeeze(0)                     # (num_classes,)
-        return self._build_prediction(logits, (time.perf_counter() - t_start) * 1000, "onnx")
+        return self._build_prediction_np(
+            logits_np.squeeze(0),                           # (num_classes,)
+            (time.perf_counter() - t_start) * 1000,
+            "onnx",
+        )
 
     def _predict_pil(self, img: Image.Image) -> DiseasePrediction:
         img = img.convert("RGB")
