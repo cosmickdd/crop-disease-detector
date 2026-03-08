@@ -106,13 +106,11 @@ async def detect_disease(
         ...,
         description="Crop leaf / plant image (JPG, PNG, WEBP — max 10 MB)",
     ),
-    crop_hint: Optional[str] = Query(
-        None,
+    crop_hint: str = Query(
+        ...,
         description=(
-            "Optional crop type to constrain prediction. "
-            "Accepted values: apple, corn, pepper, potato, tomato. "
-            "When provided the model only chooses among that crop's disease classes, "
-            "eliminating cross-crop confusion."
+            "Crop type to constrain prediction. "
+            "Accepted values: apple, corn, pepper, potato, tomato."
         ),
     ),
 ) -> DiseaseDetectionResponse:
