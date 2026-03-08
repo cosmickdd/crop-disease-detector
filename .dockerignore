@@ -1,0 +1,47 @@
+# ── Python caches ─────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyc
+*.pyd
+*.egg-info/
+
+# ── Virtual environments (deps are reinstalled inside the image) ───────────────
+.venv/
+venv/
+env/
+
+# ── Training data (not needed at runtime, can be hundreds of MB) ──────────────
+data/
+
+# ── Large PyTorch checkpoint (ONNX model is used for CPU inference instead) ───
+models/*.pth
+
+# ── Training & dev scripts (not part of the runtime service) ──────────────────
+scripts/
+
+# ── Log files ─────────────────────────────────────────────────────────────────
+logs/
+
+# ── Notebooks ─────────────────────────────────────────────────────────────────
+*.ipynb
+.ipynb_checkpoints/
+
+# ── Git metadata ──────────────────────────────────────────────────────────────
+.git/
+.gitignore
+
+# ── Docker compose (not needed inside the image) ──────────────────────────────
+docker-compose.yml
+
+# ── IDE / OS ──────────────────────────────────────────────────────────────────
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# ── CI / CD ───────────────────────────────────────────────────────────────────
+.github/
+
+# ── Worktrees ─────────────────────────────────────────────────────────────────
+*.worktrees/

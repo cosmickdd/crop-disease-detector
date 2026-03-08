@@ -1,0 +1,56 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.pyc
+.Python
+*.egg
+*.egg-info/
+dist/
+build/
+*.so
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Data (large files — track with DVC or download via script)
+data/raw/
+data/dataset/
+
+# Trained models
+# Only the large PyTorch checkpoint is ignored; the ONNX model (16.9 MB) and
+# metadata are committed so cloud platforms can load them without a volume mount.
+models/*.pth
+
+# Logs
+logs/
+
+# Jupyter / notebooks
+.ipynb_checkpoints/
+*.ipynb
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Docker
+.docker/
+
+# Kaggle API key (never commit credentials)
+kaggle.json
+.kaggle/
+
+# Environment variables
+.env
+.env.*
+!.env.example

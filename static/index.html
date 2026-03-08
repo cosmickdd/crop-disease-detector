@@ -1,0 +1,307 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Krishi AI — Crop Disease Detector</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    body { font-family: 'Segoe UI', system-ui, sans-serif; }
+    .drop-zone.drag-over { border-color: #16a34a; background: #f0fdf4; }
+    .conf-bar { transition: width 0.8s cubic-bezier(.4,0,.2,1); }
+    .tab-btn { border-bottom: 2px solid transparent; transition: all .15s; }
+    .tab-btn.active { border-bottom-color: #16a34a; color: #15803d; font-weight: 600; }
+    .tab-pane { display: none; }
+    .tab-pane.active { display: block; }
+    .spinner {
+      width: 2.5rem; height: 2.5rem;
+      border: 3px solid #e5e7eb; border-top-color: #16a34a;
+      border-radius: 50%; animation: spin .8s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+  </style>
+</head>
+<body class="min-h-screen bg-gradient-to-br from-green-50 via-emerald-50 to-teal-50">
+
+<!-- ── Header ─────────────────────────────────────────────────────────────── -->
+<header class="bg-white/80 backdrop-blur shadow-sm sticky top-0 z-10">
+  <div class="max-w-3xl mx-auto px-4 py-3 flex items-center gap-3">
+    <span class="text-3xl select-none">🌿</span>
+    <div>
+      <h1 class="text-lg font-bold text-green-800 leading-tight">Krishi AI</h1>
+      <p class="text-xs text-gray-400">Crop Disease Detector · MobileNetV3-Large · 23 classes</p>
+    </div>
+    <div class="ml-auto flex gap-3 text-xs">
+      <a href="/docs"        target="_blank" class="text-green-600 hover:underline">API Docs</a>
+      <a href="/api/v1/health" target="_blank" class="text-green-600 hover:underline">Health</a>
+    </div>
+  </div>
+</header>
+
+<!-- ── Main ───────────────────────────────────────────────────────────────── -->
+<main class="max-w-3xl mx-auto px-4 py-8 space-y-5">
+
+  <!-- Upload card -->
+  <div class="bg-white rounded-2xl shadow-md p-6">
+    <h2 class="text-base font-semibold text-gray-700 mb-4">Upload a crop leaf image</h2>
+
+    <!-- Drop zone -->
+    <label id="drop-zone"
+      class="drop-zone flex flex-col items-center justify-center border-2 border-dashed
+             border-green-200 rounded-xl p-10 cursor-pointer hover:border-green-400
+             hover:bg-green-50 transition-all"
+      for="file-input">
+      <span class="text-5xl mb-3 select-none">📸</span>
+      <p class="font-medium text-gray-600">Drag &amp; drop or <span class="text-green-600 underline">browse</span></p>
+      <p class="text-xs text-gray-400 mt-1">JPG · PNG · WEBP &nbsp;·&nbsp; max 10 MB</p>
+      <input id="file-input" type="file" class="hidden" accept=".jpg,.jpeg,.png,.webp" />
+    </label>
+
+    <!-- Preview row -->
+    <div id="preview-row" class="hidden mt-5 flex items-center gap-4">
+      <img id="preview-img"
+        class="h-28 w-28 rounded-xl object-cover border border-gray-200 shadow-sm flex-shrink-0"
+        alt="preview" />
+      <div class="flex-1 min-w-0">
+        <p id="file-name" class="text-sm font-medium text-gray-700 truncate"></p>
+        <p id="file-size" class="text-xs text-gray-400 mt-0.5"></p>
+      </div>
+      <button id="analyze-btn"
+        class="flex-shrink-0 px-5 py-2 bg-green-600 hover:bg-green-700 active:scale-95
+               text-white text-sm font-semibold rounded-lg transition-all shadow-sm">
+        Analyze →
+      </button>
+    </div>
+  </div>
+
+  <!-- Loading -->
+  <div id="loading-box" class="hidden bg-white rounded-2xl shadow-md p-8 flex flex-col items-center gap-3">
+    <div class="spinner"></div>
+    <p class="text-sm text-gray-500 font-medium">Analyzing image…</p>
+  </div>
+
+  <!-- Error -->
+  <div id="error-box" class="hidden bg-red-50 border border-red-200 rounded-2xl p-5">
+    <p class="font-semibold text-red-700">⚠ Analysis failed</p>
+    <p id="error-msg" class="text-sm text-red-600 mt-1"></p>
+  </div>
+
+  <!-- Result card -->
+  <div id="result-box" class="hidden bg-white rounded-2xl shadow-md overflow-hidden">
+
+    <!-- Top banner -->
+    <div id="result-banner" class="px-6 py-4 flex items-start gap-4">
+      <!-- Crop + disease -->
+      <div class="flex-1 min-w-0">
+        <p class="text-xs uppercase tracking-widest text-white/70 mb-0.5" id="res-crop-label"></p>
+        <h3 id="res-disease" class="text-2xl font-bold text-white leading-tight truncate"></h3>
+        <p id="res-pathogen" class="text-xs text-white/70 mt-1 italic"></p>
+      </div>
+      <!-- Healthy badge -->
+      <span id="healthy-badge"
+        class="flex-shrink-0 px-3 py-1 rounded-full text-sm font-semibold bg-white/20 text-white mt-1 border border-white/30">
+      </span>
+    </div>
+
+    <div class="px-6 py-5 space-y-5">
+
+      <!-- Confidence + Severity -->
+      <div class="grid grid-cols-2 gap-4">
+        <div>
+          <div class="flex justify-between text-xs text-gray-500 mb-1">
+            <span>Confidence</span>
+            <span id="conf-pct" class="font-bold text-green-700"></span>
+          </div>
+          <div class="h-2.5 bg-gray-100 rounded-full overflow-hidden">
+            <div id="conf-bar" class="conf-bar h-full rounded-full bg-green-500 w-0"></div>
+          </div>
+        </div>
+        <div class="flex items-center gap-2">
+          <span class="text-xs text-gray-500">Severity:</span>
+          <span id="res-severity" class="px-2 py-0.5 rounded-full text-xs font-semibold"></span>
+        </div>
+      </div>
+
+      <!-- Top-3 -->
+      <div>
+        <p class="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2">Top Predictions</p>
+        <div id="top3-list" class="space-y-1.5"></div>
+      </div>
+
+      <!-- Tabs -->
+      <div>
+        <div class="flex gap-5 border-b border-gray-100 mb-3">
+          <button class="tab-btn active text-sm pb-2" data-tab="symptoms">Symptoms</button>
+          <button class="tab-btn text-sm pb-2 text-gray-400" data-tab="treatment">Treatment</button>
+          <button class="tab-btn text-sm pb-2 text-gray-400" data-tab="prevention">Prevention</button>
+        </div>
+        <div id="tab-symptoms"   class="tab-pane active"><ul id="list-symptoms"   class="space-y-1.5 text-sm text-gray-700"></ul></div>
+        <div id="tab-treatment"  class="tab-pane">        <ul id="list-treatment"  class="space-y-1.5 text-sm text-gray-700"></ul></div>
+        <div id="tab-prevention" class="tab-pane">        <ul id="list-prevention" class="space-y-1.5 text-sm text-gray-700"></ul></div>
+      </div>
+
+      <!-- Footer meta -->
+      <div class="flex justify-between items-center text-xs text-gray-400 border-t border-gray-100 pt-3">
+        <span id="res-backend" class="px-2 py-0.5 rounded-full bg-gray-100 font-mono"></span>
+        <span id="res-time"></span>
+      </div>
+
+    </div>
+  </div>
+
+</main>
+
+<script>
+  /* ── DOM refs ─────────────────────────────────────────────────────────── */
+  const fileInput  = document.getElementById('file-input');
+  const dropZone   = document.getElementById('drop-zone');
+  const previewRow = document.getElementById('preview-row');
+  const previewImg = document.getElementById('preview-img');
+  const analyzeBtn = document.getElementById('analyze-btn');
+  const loadingBox = document.getElementById('loading-box');
+  const resultBox  = document.getElementById('result-box');
+  const errorBox   = document.getElementById('error-box');
+
+  let selectedFile = null;
+
+  /* ── Drag & drop ─────────────────────────────────────────────────────── */
+  dropZone.addEventListener('dragover',  e => { e.preventDefault(); dropZone.classList.add('drag-over'); });
+  dropZone.addEventListener('dragleave', () => dropZone.classList.remove('drag-over'));
+  dropZone.addEventListener('drop', e => {
+    e.preventDefault();
+    dropZone.classList.remove('drag-over');
+    if (e.dataTransfer.files[0]) setFile(e.dataTransfer.files[0]);
+  });
+  fileInput.addEventListener('change', () => { if (fileInput.files[0]) setFile(fileInput.files[0]); });
+
+  function setFile(file) {
+    selectedFile = file;
+    previewImg.src = URL.createObjectURL(file);
+    document.getElementById('file-name').textContent = file.name;
+    document.getElementById('file-size').textContent = (file.size / 1024).toFixed(1) + ' KB';
+    previewRow.classList.remove('hidden');
+    resultBox.classList.add('hidden');
+    errorBox.classList.add('hidden');
+    document.getElementById('conf-bar').style.width = '0';
+  }
+
+  analyzeBtn.addEventListener('click', analyze);
+
+  /* ── Analyze ────────────────────────────────────────────────────────── */
+  async function analyze() {
+    if (!selectedFile) return;
+    loadingBox.classList.remove('hidden');
+    resultBox.classList.add('hidden');
+    errorBox.classList.add('hidden');
+
+    const form = new FormData();
+    form.append('image', selectedFile, selectedFile.name);
+
+    try {
+      const resp = await fetch('/api/v1/detect-disease', { method: 'POST', body: form });
+      const data = await resp.json();
+      if (!resp.ok) throw new Error(data.detail || `HTTP ${resp.status}`);
+      showResult(data);
+    } catch (err) {
+      document.getElementById('error-msg').textContent = err.message;
+      errorBox.classList.remove('hidden');
+    } finally {
+      loadingBox.classList.add('hidden');
+    }
+  }
+
+  /* ── Render result ───────────────────────────────────────────────────── */
+  const SEV_COLORS = {
+    'Low':              ['bg-green-500',   'bg-green-100 text-green-800'],
+    'Moderate':         ['bg-yellow-400',  'bg-yellow-100 text-yellow-800'],
+    'Moderate to High': ['bg-orange-400',  'bg-orange-100 text-orange-800'],
+    'High':             ['bg-red-500',     'bg-red-100 text-red-800'],
+    'Very High':        ['bg-red-700',     'bg-red-200 text-red-900'],
+  };
+
+  function showResult(d) {
+    /* Banner */
+    const healthy = !!d.is_healthy;
+    const banner  = document.getElementById('result-banner');
+    banner.className = 'px-6 py-4 flex items-start gap-4 ' +
+      (healthy ? 'bg-gradient-to-r from-green-600 to-emerald-500'
+               : 'bg-gradient-to-r from-red-500   to-rose-600');
+
+    document.getElementById('res-crop-label').textContent = d.crop;
+    document.getElementById('res-disease').textContent    = d.disease;
+    document.getElementById('res-pathogen').textContent   = d.pathogen || '';
+
+    const badge = document.getElementById('healthy-badge');
+    badge.textContent = healthy ? '✓ Healthy' : '✗ Diseased';
+
+    /* Confidence bar */
+    const pct = Math.round(d.confidence * 100);
+    document.getElementById('conf-pct').textContent = pct + '%';
+    const bar = document.getElementById('conf-bar');
+    const [barColor] = SEV_COLORS[d.severity] || ['bg-gray-400', ''];
+    bar.className = 'conf-bar h-full rounded-full w-0 ' + barColor;
+    requestAnimationFrame(() => { bar.style.width = pct + '%'; });
+
+    /* Severity badge */
+    const sevEl = document.getElementById('res-severity');
+    sevEl.textContent = d.severity;
+    const [, sevClass] = SEV_COLORS[d.severity] || ['', 'bg-gray-100 text-gray-700'];
+    sevEl.className = 'px-2 py-0.5 rounded-full text-xs font-semibold ' + sevClass;
+
+    /* Top-3 */
+    const top3El = document.getElementById('top3-list');
+    top3El.innerHTML = (d.top3_predictions || []).map((t, i) => {
+      const label = t.class_name.replace(/___/g, ' — ').replace(/_/g, ' ');
+      const p     = Math.round(t.confidence * 100);
+      const w     = p + '%';
+      return `<div class="space-y-0.5">
+        <div class="flex justify-between text-xs">
+          <span class="${i === 0 ? 'font-semibold text-gray-800' : 'text-gray-500'} truncate max-w-xs">${label}</span>
+          <span class="font-mono text-xs ml-2 ${i === 0 ? 'text-green-700 font-bold' : 'text-gray-400'}">${p}%</span>
+        </div>
+        <div class="h-1 bg-gray-100 rounded-full overflow-hidden">
+          <div class="h-full rounded-full ${i === 0 ? 'bg-green-500' : 'bg-gray-300'}" style="width:${w}"></div>
+        </div>
+      </div>`;
+    }).join('');
+
+    /* List fillers */
+    fillList('list-symptoms',   d.symptoms);
+    fillList('list-treatment',  d.treatment);
+    fillList('list-prevention', d.prevention);
+
+    /* Meta footer */
+    document.getElementById('res-backend').textContent = 'backend: ' + (d.backend || 'pytorch');
+    document.getElementById('res-time').textContent    = 'inference: ' + (d.inference_time_ms || 0).toFixed(1) + ' ms';
+
+    resultBox.classList.remove('hidden');
+
+    /* Reset to Symptoms tab */
+    document.querySelectorAll('.tab-btn').forEach(b => {
+      b.classList.remove('active'); b.classList.add('text-gray-400');
+    });
+    document.querySelectorAll('.tab-pane').forEach(p => p.classList.remove('active'));
+    document.querySelector('.tab-btn[data-tab="symptoms"]').classList.replace('text-gray-400', 'active');
+    document.querySelector('.tab-btn[data-tab="symptoms"]').classList.add('active');
+    document.getElementById('tab-symptoms').classList.add('active');
+  }
+
+  function fillList(id, items) {
+    const el = document.getElementById(id);
+    el.innerHTML = (items && items.length)
+      ? items.map(s => `<li class="flex gap-2"><span class="text-green-500 mt-0.5 flex-shrink-0">▸</span><span>${s}</span></li>`).join('')
+      : '<li class="text-gray-400 italic">No information available</li>';
+  }
+
+  /* ── Tabs ───────────────────────────────────────────────────────────── */
+  document.querySelectorAll('.tab-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.tab-btn').forEach(b => { b.classList.remove('active'); b.classList.add('text-gray-400'); });
+      document.querySelectorAll('.tab-pane').forEach(p => p.classList.remove('active'));
+      btn.classList.add('active'); btn.classList.remove('text-gray-400');
+      document.getElementById('tab-' + btn.dataset.tab).classList.add('active');
+    });
+  });
+</script>
+</body>
+</html>

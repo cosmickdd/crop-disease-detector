@@ -1,0 +1,27 @@
+# ──────────────────────────────────────────────────────────────────────────────
+# Render deployment configuration
+# https://render.com/docs/render-yaml-spec
+#
+# Connect this Git repo in Render → "New Web Service" → "Infrastructure as Code".
+# Render will auto-detect this file and provision the service.
+# ──────────────────────────────────────────────────────────────────────────────
+
+services:
+  - type: web
+    name: krishi-ai-crop-disease-detector
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    # Render free tier: 512 MB RAM, shared CPU.
+    # The ONNX backend + single uvicorn worker stays comfortably under that.
+    plan: free
+
+    healthCheckPath: /api/v1/health
+
+    envVars:
+      - key: MODEL_ARCH
+        value: mobilenet_v3_large
+      - key: DEVICE
+        value: auto            # auto → ONNX on CPU, PyTorch on CUDA
+      - key: CONFIDENCE_THRESHOLD
+        value: "0.50"
+      # PORT is injected automatically by Render; do not set it manually.

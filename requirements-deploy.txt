@@ -1,0 +1,32 @@
+# ============================================================
+# Krishi AI — Deployment requirements (CPU / cloud platforms)
+# ============================================================
+# PyTorch CPU wheels are installed SEPARATELY in the Dockerfile:
+#   pip install torch==2.2.2+cpu torchvision==0.17.2+cpu \
+#       --index-url https://download.pytorch.org/whl/cpu
+#
+# This file contains every other runtime dependency.
+# Training, visualisation, and dataset-download packages are
+# intentionally excluded to keep the image small.
+# ============================================================
+
+# API server
+fastapi>=0.111.0
+uvicorn[standard]>=0.29.0
+python-multipart>=0.0.9
+
+# Image processing
+Pillow>=10.3.0
+numpy>=1.26.0
+
+# Configuration & serialisation
+pydantic>=2.7.0
+pydantic-settings>=2.3.0
+python-dotenv>=1.0.1
+
+# ONNX inference (primary backend on CPU deployments — 2-3× faster than PyTorch)
+onnx>=1.16.0
+onnxruntime>=1.18.0
+
+# Async file responses
+aiofiles>=23.2.0
