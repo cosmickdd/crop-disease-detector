@@ -90,6 +90,8 @@ class DiseasePrediction:
     top3:              List[Dict[str, Any]] = field(default_factory=list)
     inference_time_ms: float = 0.0
     backend:           str   = "pytorch"
+    below_threshold:   bool  = False
+    warning:           Optional[str] = None
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -106,6 +108,8 @@ class DiseasePrediction:
             "top3_predictions":  self.top3,
             "inference_time_ms": round(self.inference_time_ms, 2),
             "backend":           self.backend,
+            "below_threshold":   self.below_threshold,
+            "warning":           self.warning,
         }
 
 
@@ -346,6 +350,28 @@ class InferenceEngine:
             for i in top3_idxs
         ]
 
+        # Uncertainty gate — catches non-plant images and ambiguous predictions.
+        margin           = float(probs[top3_idxs[0]] - probs[top3_idxs[1]]) if k > 1 else 1.0
+        below_threshold  = confidence < config.CONFIDENCE_WARN_THRESHOLD
+        low_margin       = margin < config.MARGIN_WARN_THRESHOLD
+        uncertain        = below_threshold or low_margin
+        if uncertain:
+            if below_threshold:
+                warning: Optional[str] = (
+                    f"Low confidence ({confidence:.0%}). "
+                    "The image may not be a recognisable crop leaf, "
+                    "or the plant's condition is outside the model's training "
+                    "distribution. Upload a clear, close-up photo of a plant leaf."
+                )
+            else:
+                warning = (
+                    f"Ambiguous result — top two classes are very similar "
+                    f"(margin {margin:.0%}). Consider re-capturing the leaf "
+                    "from a different angle or lighting condition."
+                )
+        else:
+            warning = None
+
         if confidence < self.conf_threshold:
             logger.warning(
                 f"Low confidence prediction: {class_name} ({confidence:.2%}). "
@@ -367,6 +393,8 @@ class InferenceEngine:
             top3=top3,
             inference_time_ms=inference_ms,
             backend=backend,
+            below_threshold=uncertain,
+            warning=warning,
         )
 
     def _build_prediction(
@@ -393,6 +421,23 @@ class InferenceEngine:
             for v, i in zip(top3_vals, top3_idxs)
         ]
 
+        # Uncertainty gate
+        margin          = float(top3_vals[0].item() - top3_vals[1].item()) if len(top3_vals) > 1 else 1.0
+        below_threshold = confidence < config.CONFIDENCE_WARN_THRESHOLD
+        low_margin      = margin < config.MARGIN_WARN_THRESHOLD
+        uncertain       = below_threshold or low_margin
+        if uncertain:
+            warning: Optional[str] = (
+                f"Low confidence ({confidence:.0%}). The image may not be a "
+                "recognisable crop leaf, or the plant's condition is outside "
+                "the model's training distribution."
+            ) if below_threshold else (
+                f"Ambiguous result — top two classes are very similar "
+                f"(margin {margin:.0%}). Consider re-capturing the leaf."
+            )
+        else:
+            warning = None
+
         if confidence < self.conf_threshold:
             logger.warning(
                 f"Low confidence prediction: {class_name} ({confidence:.2%}). "
@@ -414,6 +459,8 @@ class InferenceEngine:
             top3=top3,
             inference_time_ms=inference_ms,
             backend=backend,
+            below_threshold=uncertain,
+            warning=warning,
         )
 
     def _predict_pytorch(self, img: Image.Image) -> DiseasePrediction:

@@ -62,6 +62,11 @@ TEMPERATURE_SAVE_PATH = MODELS_DIR / "temperature.json"
 # Inference
 # ---------------------------------------------------------------------------
 CONFIDENCE_THRESHOLD = float(os.getenv("CONFIDENCE_THRESHOLD", 0.50))
+# Predictions below this level get a warning flag sent to the client.
+# Catches non-plant images and ambiguous cases (model unsure between classes).
+CONFIDENCE_WARN_THRESHOLD = float(os.getenv("CONFIDENCE_WARN_THRESHOLD", 0.75))
+# If (top-1 conf - top-2 conf) < this, model is choosing between similar classes.
+MARGIN_WARN_THRESHOLD = float(os.getenv("MARGIN_WARN_THRESHOLD", 0.20))
 # "auto" → use CUDA if available, else CPU
 DEVICE = os.getenv("DEVICE", "auto")
 

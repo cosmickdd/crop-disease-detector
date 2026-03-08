@@ -80,6 +80,8 @@ def _build_response(prediction) -> DiseaseDetectionResponse:
         ],
         inference_time_ms=prediction.inference_time_ms,
         backend=prediction.backend,
+        below_threshold=prediction.below_threshold,
+        warning=prediction.warning,
     )
 
 

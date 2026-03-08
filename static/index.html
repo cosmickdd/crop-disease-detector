@@ -86,6 +86,16 @@
     <p id="error-msg" class="text-sm text-red-600 mt-1"></p>
   </div>
 
+  <!-- Warning banner (low confidence / non-plant image) -->
+  <div id="warn-box" class="hidden bg-amber-50 border border-amber-300 rounded-2xl p-5 flex gap-3">
+    <span class="text-2xl flex-shrink-0">⚠️</span>
+    <div>
+      <p class="font-semibold text-amber-800">Uncertain Prediction</p>
+      <p id="warn-msg" class="text-sm text-amber-700 mt-1"></p>
+      <p class="text-xs text-amber-600 mt-2">For best results, upload a clear close-up photo of a single plant leaf in good lighting.</p>
+    </div>
+  </div>
+
   <!-- Result card -->
   <div id="result-box" class="hidden bg-white rounded-2xl shadow-md overflow-hidden">
 
@@ -182,6 +192,7 @@
     previewRow.classList.remove('hidden');
     resultBox.classList.add('hidden');
     errorBox.classList.add('hidden');
+    document.getElementById('warn-box').classList.add('hidden');
     document.getElementById('conf-bar').style.width = '0';
   }
 
@@ -193,6 +204,7 @@
     loadingBox.classList.remove('hidden');
     resultBox.classList.add('hidden');
     errorBox.classList.add('hidden');
+    document.getElementById('warn-box').classList.add('hidden');
 
     const form = new FormData();
     form.append('image', selectedFile, selectedFile.name);
@@ -220,6 +232,16 @@
   };
 
   function showResult(d) {
+    /* Warning banner */
+    const warnBox = document.getElementById('warn-box');
+    if (d.warning) {
+      document.getElementById('warn-msg').textContent = d.warning;
+      warnBox.classList.remove('hidden');
+    } else {
+      warnBox.classList.add('hidden');
+    }
+    resultBox.style.opacity = d.below_threshold ? '0.82' : '1';
+
     /* Banner */
     const healthy = !!d.is_healthy;
     const banner  = document.getElementById('result-banner');
@@ -265,8 +287,14 @@
       </div>`;
     }).join('');
 
-    /* List fillers */
-    fillList('list-symptoms',   d.symptoms);
+    /* List fillers — healthy plants have no symptoms, show friendly message */
+    if (healthy && (!d.symptoms || !d.symptoms.length)) {
+      document.getElementById('list-symptoms').innerHTML =
+        '<li class="flex gap-2 text-green-700"><span class="mt-0.5 flex-shrink-0">✓</span>' +
+        '<span>No symptoms detected — your plant appears healthy!</span></li>';
+    } else {
+      fillList('list-symptoms', d.symptoms);
+    }
     fillList('list-treatment',  d.treatment);
     fillList('list-prevention', d.prevention);
 

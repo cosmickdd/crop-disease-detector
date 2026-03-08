@@ -37,6 +37,8 @@ class DiseaseDetectionResponse(BaseModel):
     )
     inference_time_ms: float         = Field(..., description="Server-side inference time in milliseconds")
     backend:           str           = Field("pytorch", description="Inference backend used: pytorch | onnx")
+    below_threshold:   bool          = Field(False, description="True if confidence is below warning threshold or prediction is ambiguous")
+    warning:           Optional[str] = Field(None, description="Warning message if prediction confidence is low or ambiguous")
 
     model_config = {
         "json_schema_extra": {
